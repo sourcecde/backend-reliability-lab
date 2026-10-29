@@ -3,25 +3,73 @@ package com.backendreliabilitylab.service
 import com.backendreliabilitylab.dto.CreateOrderRequestDTO
 import com.backendreliabilitylab.dto.OrderResponseDTO
 import com.backendreliabilitylab.entity.Order
+import com.backendreliabilitylab.repository.IdempotencyClaimRepository
+import com.backendreliabilitylab.repository.IdempotencyKeyRepository
 import com.backendreliabilitylab.repository.OrderRepository
 import org.springframework.stereotype.Service
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.UUID
+import org.springframework.transaction.annotation.Transactional
+import org.springframework.http.HttpStatus
+import org.springframework.web.server.ResponseStatusException
 
 @Service
-class OrderService(private val orderRepository: OrderRepository) {
+class OrderService(
+    private val orderRepository: OrderRepository,
+    private val idempotencyClaimRepository: IdempotencyClaimRepository,
+    private val idempotencyKeyRepository: IdempotencyKeyRepository,
+    ) {
 
-    fun createOrder(request: CreateOrderRequestDTO): OrderResponseDTO {
+    @Transactional
+    fun createOrder(
+        request: CreateOrderRequestDTO,
+        idempotencyKey: UUID
+    ): OrderResponseDTO {
+
+        val requestHash = calculateRequestHash(request)
+
+        val claimed = idempotencyClaimRepository.claim(
+            idempotencyKey,
+            requestHash
+        )
+
+        if (!claimed) {
+            val existing = idempotencyKeyRepository
+                .findByIdempotencyKey(idempotencyKey)
+                ?: error("Idempotency record not found")
+
+            if (existing.requestHash != requestHash) {
+                throw ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Idempotency key already used with different request data"
+                )
+            }
+
+            val existingOrder = orderRepository.findById(
+                checkNotNull(existing.orderId)
+            ).orElseThrow()
+
+            return existingOrder.toResponse()
+        }
+
         val order = Order().apply {
             uuid = UUID.randomUUID()
             productId = request.productId
             quantity = request.quantity
         }
-        val savedOrder = orderRepository.save(order)
-        return OrderResponseDTO(
-            uuid = savedOrder.uuid ?: UUID.randomUUID(),
-            productId = savedOrder.productId ?: UUID.randomUUID(),
-            quantity = savedOrder.quantity ?: 0
-        )
+
+        val savedOrder = orderRepository.saveAndFlush(order)
+
+        val idempotencyRecord = idempotencyKeyRepository
+            .findByIdempotencyKey(idempotencyKey)
+            ?: error("Claimed idempotency record not found")
+
+        idempotencyRecord.orderId = checkNotNull(savedOrder.id)
+
+        idempotencyKeyRepository.save(idempotencyRecord)
+
+        return savedOrder.toResponse()
     }
 
     fun updateOrder(orderId: Long, request: CreateOrderRequestDTO): OrderResponseDTO? {
@@ -80,5 +128,20 @@ class OrderService(private val orderRepository: OrderRepository) {
             false
         }
     }
+
+    private fun calculateRequestHash(request: CreateOrderRequestDTO): String {
+        val payload = "${request.productId}:${request.quantity}"
+
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(payload.toByteArray(StandardCharsets.UTF_8))
+
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun Order.toResponse() = OrderResponseDTO(
+        uuid = checkNotNull(uuid),
+        productId = checkNotNull(productId),
+        quantity = checkNotNull(quantity)
+    )
 
 }

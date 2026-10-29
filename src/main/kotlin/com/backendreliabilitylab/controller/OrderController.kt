@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
+import org.springframework.web.bind.annotation.RequestHeader
 
 @RestController
 @RequestMapping("/api/order")
@@ -32,8 +33,11 @@ class OrderController (private val orderService: OrderService) {
     }
 
     @PostMapping("/create")
-    fun createOrder(@RequestBody request: CreateOrderRequestDTO): OrderResponseDTO {
-        return orderService.createOrder(request)
+    fun createOrder(
+        @RequestHeader("Idempotency-Key") idempotencyKey: UUID,
+        @RequestBody request: CreateOrderRequestDTO
+    ): OrderResponseDTO {
+        return orderService.createOrder(request, idempotencyKey)
     }
 
     @PutMapping("/update/{orderId}")
