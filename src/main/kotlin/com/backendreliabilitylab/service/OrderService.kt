@@ -3,6 +3,7 @@ package com.backendreliabilitylab.service
 import com.backendreliabilitylab.dto.CreateOrderRequestDTO
 import com.backendreliabilitylab.dto.OrderResponseDTO
 import com.backendreliabilitylab.entity.Order
+import com.backendreliabilitylab.entity.OutboxEvent
 import com.backendreliabilitylab.repository.IdempotencyClaimRepository
 import com.backendreliabilitylab.repository.IdempotencyKeyRepository
 import com.backendreliabilitylab.repository.OrderRepository
@@ -13,12 +14,14 @@ import java.util.UUID
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.http.HttpStatus
 import org.springframework.web.server.ResponseStatusException
+import com.backendreliabilitylab.repository.OutboxEventRepository
 
 @Service
 class OrderService(
     private val orderRepository: OrderRepository,
     private val idempotencyClaimRepository: IdempotencyClaimRepository,
     private val idempotencyKeyRepository: IdempotencyKeyRepository,
+    private val outboxEventRepository: OutboxEventRepository,
     ) {
 
     @Transactional
@@ -60,6 +63,8 @@ class OrderService(
         }
 
         val savedOrder = orderRepository.saveAndFlush(order)
+
+        createOrderOutboxEvent(savedOrder)
 
         val idempotencyRecord = idempotencyKeyRepository
             .findByIdempotencyKey(idempotencyKey)
@@ -143,5 +148,24 @@ class OrderService(
         productId = checkNotNull(productId),
         quantity = checkNotNull(quantity)
     )
+
+    private fun createOrderOutboxEvent(order: Order) {
+        val orderUuid = checkNotNull(order.uuid)
+
+        val event = OutboxEvent().apply {
+            aggregateType = "ORDER"
+            aggregateId = orderUuid
+            eventType = "OrderCreated"
+            payload = """
+            {
+              "orderId": "$orderUuid",
+              "productId": "${checkNotNull(order.productId)}",
+              "quantity": ${checkNotNull(order.quantity)}
+            }
+        """.trimIndent()
+        }
+
+        outboxEventRepository.save(event)
+    }
 
 }
