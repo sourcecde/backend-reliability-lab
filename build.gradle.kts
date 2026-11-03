@@ -29,6 +29,7 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-flyway")
 	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.1")
 	implementation("org.springframework.boot:spring-boot-starter-jdbc")
+	implementation("org.springframework.boot:spring-boot-starter-data-redis")
 	runtimeOnly("org.postgresql:postgresql")
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
@@ -37,6 +38,7 @@ dependencies {
 	testImplementation("org.testcontainers:testcontainers-junit-jupiter")
 	testImplementation("org.testcontainers:testcontainers-postgresql")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+	testImplementation("org.testcontainers:testcontainers")
 }
 
 kotlin {

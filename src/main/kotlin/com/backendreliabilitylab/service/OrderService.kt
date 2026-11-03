@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.http.HttpStatus
 import org.springframework.web.server.ResponseStatusException
 import com.backendreliabilitylab.repository.OutboxEventRepository
+import java.util.concurrent.atomic.AtomicInteger
 
 @Service
 class OrderService(
@@ -22,7 +23,10 @@ class OrderService(
     private val idempotencyClaimRepository: IdempotencyClaimRepository,
     private val idempotencyKeyRepository: IdempotencyKeyRepository,
     private val outboxEventRepository: OutboxEventRepository,
+    private val orderCacheService: OrderCacheService,
     ) {
+
+    val databaseReadCount = AtomicInteger(0)
 
     @Transactional
     fun createOrder(
@@ -83,6 +87,7 @@ class OrderService(
             existingOrder.productId = request.productId
             existingOrder.quantity = request.quantity
             val updatedOrder = orderRepository.save(existingOrder)
+            orderCacheService.evict(orderId)
             OrderResponseDTO(
                 uuid = updatedOrder.uuid ?: UUID.randomUUID(),
                 productId = updatedOrder.productId ?: UUID.randomUUID(),
@@ -115,19 +120,23 @@ class OrderService(
 
 
     fun getOrderById(orderId: Long): OrderResponseDTO? {
-        val order = orderRepository.findById(orderId).orElse(null)
-        return order?.let {
-            OrderResponseDTO(
-                uuid = it.uuid ?: UUID.randomUUID(),
-                productId = it.productId ?: UUID.randomUUID(),
-                quantity = it.quantity ?: 0
-            )
+        val cachedOrder = orderCacheService.get(orderId)
+        if (cachedOrder != null) {
+            return cachedOrder
         }
+        databaseReadCount.incrementAndGet()
+
+        val order = orderRepository.findById(orderId)
+            .orElse(null)?: return null
+        val response = order.toResponse()
+        orderCacheService.put(orderId, response)
+        return response
     }
 
     fun deleteOrder(orderId: Long): Boolean {
         return if (orderRepository.existsById(orderId)) {
             orderRepository.deleteById(orderId)
+            orderCacheService.evict(orderId)
             true
         } else {
             false
